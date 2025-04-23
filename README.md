@@ -8,7 +8,7 @@ The rest of the time I'm designing or making things that blink, bleep, and bloop
 
 I post my photos and noisy videos on [Instagram](https://instagram.com/laspalmas7), and you can see more of that on my [YouTube](https://youtube.com/@laspalmas7) channel. I also livestream my modular synth jams on [Twitch](https://twitch.tv/andrewpmiller).
 
---
+
 
 ## Recent YouTube Videos
 
