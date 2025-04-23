@@ -8,6 +8,10 @@ The rest of the time I'm designing or making things that blink, bleep, and bloop
 
 I post my photos and noisy videos on [Instagram](https://instagram.com/laspalmas7), and you can see more of that on my [YouTube](https://youtube.com/@laspalmas7) channel. I also livestream my modular synth jams on [Twitch](https://twitch.tv/andrewpmiller).
 
+--
+
+## Recent YouTube Videos
+
 <!-- BEGIN YOUTUBE-CARDS -->
 [![03.26.2025 - Stochastic Modular DnB](https://ytcards.demolab.com/?id=RAmDzysMcbo&title=03.26.2025+-+Stochastic+Modular+DnB&lang=en&timestamp=1742989891&background_color=%230d1117&title_color=%23ffffff&stats_color=%23dedede&max_title_lines=1&width=250&border_radius=5 "03.26.2025 - Stochastic Modular DnB")](https://www.youtube.com/watch?v=RAmDzysMcbo)
 [![03.23.2025 - Strange Ambience and Glitches](https://ytcards.demolab.com/?id=z-HUD7m8J_8&title=03.23.2025+-+Strange+Ambience+and+Glitches&lang=en&timestamp=1742764153&background_color=%230d1117&title_color=%23ffffff&stats_color=%23dedede&max_title_lines=1&width=250&border_radius=5 "03.23.2025 - Strange Ambience and Glitches")](https://www.youtube.com/watch?v=z-HUD7m8J_8)
