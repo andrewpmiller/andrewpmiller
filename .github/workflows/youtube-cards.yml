@@ -16,4 +16,5 @@ jobs:
       - uses: DenverCoder1/github-readme-youtube-cards@main
         with:
           channel_id: UCcSnI3n2Jd-2qgncC6k_S1g
+          lang: en
           
