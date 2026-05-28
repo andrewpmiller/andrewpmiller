@@ -1,5 +1,4 @@
 name: GitHub Readme YouTube Cards
-env: FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true
 on:
   schedule:
     # Runs daily
