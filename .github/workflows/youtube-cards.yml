@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Force Node 24 to test this action
+    env: FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true
     # Allow the job to commit to the repository
     permissions:
       contents: write
