@@ -5,16 +5,34 @@ on:
     - cron: "0 0 * * *"
   workflow_dispatch:
 
+concurrency:
+  group: youtube-cards
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Allow the job to commit to the repository
+    timeout-minutes: 10
     permissions:
       contents: write
-    # Run the GitHub Readme YouTube Cards action
     steps:
-      - uses: DenverCoder1/github-readme-youtube-cards@main
+      - uses: actions/checkout@v4
+
+      # Safeguard 1: Pinned version (no @main floating reference)
+      - name: Generate YouTube cards
+        uses: DenverCoder1/github-readme-youtube-cards@1.8.0
         with:
           channel_id: UCcSnI3n2Jd-2qgncC6k_S1g
           lang: en
-          
+
+      # Safeguard 2: Verification — fail the build if cards are empty
+      # The action exits 0 even when the feed fetch fails silently,
+      # so this step converts the silent failure into a loud one.
+      - name: Verify YouTube cards were generated
+        run: |
+          content=$(sed -n '/<!-- BEGIN YOUTUBE-CARDS -->/,/<!-- END YOUTUBE-CARDS -->/p' README.md | sed '1d;$d' | tr -d '[:space:]')
+          if [ -z "$content" ]; then
+            echo "::error::No YouTube cards found in README.md — the feed fetch failed silently."
+            exit 1
+          fi
+          echo "YouTube cards verified successfully"
