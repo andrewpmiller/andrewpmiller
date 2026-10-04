@@ -19,15 +19,17 @@ jobs:
 
       - name: Generate YouTube cards
         id: cards
-        uses: DenverCoder1/github-readme-youtube-cards@1.8.0
+        uses: DenverCoder1/github-readme-youtube-cards@bea8b4bc2094973fe3c3a49d86076328588dc454  # 1.8.0
         with:
           channel_id: UCcSnI3n2Jd-2qgncC6k_S1g
           lang: en
           output_only: true
 
       - name: Verify cards were generated
+        env:
+          MARKDOWN: ${{ steps.cards.outputs.markdown }}
         run: |
-          if [ -z "${{ steps.cards.outputs.markdown }}" ]; then
+          if [ -z "$MARKDOWN" ]; then
             echo "::error::No YouTube cards generated — the feed fetch failed silently."
             exit 1
           fi
@@ -40,15 +42,18 @@ jobs:
           python3 - <<'PY'
           import os, re
           markdown = os.environ["MARKDOWN"]
-          with open("README.md", "r") as f:
+          with open("README.md", "r", encoding="utf-8") as f:
               content = f.read()
+          pattern = r"(<!-- BEGIN YOUTUBE-CARDS -->).*?(<!-- END YOUTUBE-CARDS -->)"
+          if not re.search(pattern, content, flags=re.DOTALL):
+              raise ValueError("YouTube cards markers not found in README.md")
           content = re.sub(
-              r"(<!-- BEGIN YOUTUBE-CARDS -->).*?(<!-- END YOUTUBE-CARDS -->)",
+              pattern,
               lambda m: m.group(1) + "\n" + markdown + "\n" + m.group(2),
               content,
               flags=re.DOTALL,
           )
-          with open("README.md", "w") as f:
+          with open("README.md", "w", encoding="utf-8") as f:
               f.write(content)
           PY
 
@@ -57,5 +62,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add README.md
-          git diff --cached --quiet || git commit -m "Update YouTube cards"
-          git push
+          if ! git diff --cached --quiet; then
+            git commit -m "Update YouTube cards ($(date -u +%Y-%m-%d))"
+            git push
+          else
+            echo "No changes to commit"
+          fi
