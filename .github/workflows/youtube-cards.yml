@@ -1,7 +1,6 @@
 name: GitHub Readme YouTube Cards
 on:
   schedule:
-    # Runs daily
     - cron: "0 0 * * *"
   workflow_dispatch:
 
@@ -18,21 +17,45 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Safeguard 1: Pinned version (no @main floating reference)
       - name: Generate YouTube cards
+        id: cards
         uses: DenverCoder1/github-readme-youtube-cards@1.8.0
         with:
           channel_id: UCcSnI3n2Jd-2qgncC6k_S1g
           lang: en
+          output_only: true
 
-      # Safeguard 2: Verification — fail the build if cards are empty
-      # The action exits 0 even when the feed fetch fails silently,
-      # so this step converts the silent failure into a loud one.
-      - name: Verify YouTube cards were generated
+      - name: Verify cards were generated
         run: |
-          content=$(sed -n '/<!-- BEGIN YOUTUBE-CARDS -->/,/<!-- END YOUTUBE-CARDS -->/p' README.md | sed '1d;$d' | tr -d '[:space:]')
-          if [ -z "$content" ]; then
-            echo "::error::No YouTube cards found in README.md — the feed fetch failed silently."
+          if [ -z "${{ steps.cards.outputs.markdown }}" ]; then
+            echo "::error::No YouTube cards generated — the feed fetch failed silently."
             exit 1
           fi
           echo "YouTube cards verified successfully"
+
+      - name: Write cards to README
+        env:
+          MARKDOWN: ${{ steps.cards.outputs.markdown }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          markdown = os.environ["MARKDOWN"]
+          with open("README.md", "r") as f:
+              content = f.read()
+          content = re.sub(
+              r"(<!-- BEGIN YOUTUBE-CARDS -->).*?(<!-- END YOUTUBE-CARDS -->)",
+              lambda m: m.group(1) + "\n" + markdown + "\n" + m.group(2),
+              content,
+              flags=re.DOTALL,
+          )
+          with open("README.md", "w") as f:
+              f.write(content)
+          PY
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git diff --cached --quiet || git commit -m "Update YouTube cards"
+          git push
