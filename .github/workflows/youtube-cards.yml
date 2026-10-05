@@ -17,31 +17,103 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Generate YouTube cards
-        id: cards
-        uses: DenverCoder1/github-readme-youtube-cards@bea8b4bc2094973fe3c3a49d86076328588dc454  # 1.8.0
+      # Pre-check: probe the YouTube RSS feed so logs distinguish a YouTube
+      # outage (non-2xx/slow here) from a bug in the cards action. Never fails.
+      - name: Pre-check YouTube RSS feed
+        continue-on-error: true
+        run: |
+          curl -sS -o /dev/null \
+            -w 'rss_http_code=%{http_code} rss_time_total=%{time_total}s rss_size=%{size_download}B\n' \
+            --max-time 30 \
+            'https://www.youtube.com/feeds/videos.xml?channel_id=UCcSnI3n2Jd-2qgncC6k_S1g' || true
+
+      # Attempt 1: direct (no wrapper). This action exits 0 even on feed
+      # fetch failure (empty markdown), so retry is handled by the
+      # second attempt below, not by failure-retry wrappers.
+      # NOTE: DenverCoder1 pin bea8b4bc... IS tag 1.8.0, the latest release
+      # (verified via git ls-remote). main HEAD (a02c9b2) has no release tag,
+      # so the pin stays; do not float to @main.
+      - name: Generate YouTube cards (attempt 1)
+        id: cards_attempt1
+        continue-on-error: true
+        uses: DenverCoder1/github-readme-youtube-cards@bea8b4bc2094973fe3c3a49d86076328588dc454 # 1.8.0
         with:
           channel_id: UCcSnI3n2Jd-2qgncC6k_S1g
           lang: en
           output_only: true
 
+      - name: Wait before retry
+        if: steps.cards_attempt1.outputs.markdown == ''
+        run: sleep 60
+
+      # Attempt 2: only runs if attempt 1 produced empty output (transient
+      # YouTube RSS blip). Exhausted retries fall through to the fail-open
+      # verify step below, so transient failures stay green and retry next schedule.
+      - name: Generate YouTube cards (attempt 2)
+        id: cards_attempt2
+        if: steps.cards_attempt1.outputs.markdown == ''
+        continue-on-error: true
+        uses: DenverCoder1/github-readme-youtube-cards@bea8b4bc2094973fe3c3a49d86076328588dc454 # 1.8.0
+        with:
+          channel_id: UCcSnI3n2Jd-2qgncC6k_S1g
+          lang: en
+          output_only: true
+
+      # Shim: expose first non-empty markdown as steps.cards.outputs.markdown
+      # so downstream steps are unchanged.
+      - name: Expose cards markdown
+        id: cards
+        env:
+          MARKDOWN1: ${{ steps.cards_attempt1.outputs.markdown }}
+          MARKDOWN2: ${{ steps.cards_attempt2.outputs.markdown }}
+        run: |
+          if [ -n "$MARKDOWN2" ]; then
+            markdown="$MARKDOWN2"
+          else
+            markdown="$MARKDOWN1"
+          fi
+          {
+            echo 'markdown<<CARDS_EOF'
+            printf '%s\n' "$markdown"
+            echo 'CARDS_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      # Fail-open: empty markdown warns + sets skip=true (exit 0) instead of
+      # failing the run. Logs length + first 500 chars for diagnostics.
       - name: Verify cards were generated
+        id: verify
         env:
           MARKDOWN: ${{ steps.cards.outputs.markdown }}
         run: |
+          len=$(printf '%s' "$MARKDOWN" | wc -c)
+          echo "Markdown length: ${len} chars"
+          echo "First 500 chars:"
+          printf '%s' "$MARKDOWN" | head -c 500
+          echo
           if [ -z "$MARKDOWN" ]; then
-            echo "::error::No YouTube cards generated — the feed fetch failed silently."
-            exit 1
+            echo "::warning::No YouTube cards generated — skipping README update; next scheduled run will retry."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
           echo "YouTube cards verified successfully"
 
       - name: Write cards to README
+        if: steps.verify.outputs.skip != 'true'
         env:
           MARKDOWN: ${{ steps.cards.outputs.markdown }}
         run: |
+          # Belt-and-suspenders: never write an empty section even if gating fails.
+          if [ -z "$MARKDOWN" ]; then
+            echo "::warning::Empty markdown at write step — refusing to write."
+            exit 0
+          fi
           python3 - <<'PY'
           import os, re
           markdown = os.environ["MARKDOWN"]
+          if not markdown.strip():
+              print("::warning::Empty markdown at write step — refusing to write.")
+              raise SystemExit(0)
           with open("README.md", "r", encoding="utf-8") as f:
               content = f.read()
           pattern = r"(<!-- BEGIN YOUTUBE-CARDS -->).*?(<!-- END YOUTUBE-CARDS -->)"
@@ -58,6 +130,7 @@ jobs:
           PY
 
       - name: Commit and push
+        if: steps.verify.outputs.skip != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
