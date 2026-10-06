@@ -15,7 +15,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Pre-check: probe the YouTube RSS feed so logs distinguish a YouTube
       # outage (non-2xx/slow here) from a bug in the cards action. Never fails.
@@ -30,13 +30,16 @@ jobs:
       # Attempt 1: direct (no wrapper). This action exits 0 even on feed
       # fetch failure (empty markdown), so retry is handled by the
       # second attempt below, not by failure-retry wrappers.
-      # NOTE: DenverCoder1 pin bea8b4bc... IS tag 1.8.0, the latest release
-      # (verified via git ls-remote). main HEAD (a02c9b2) has no release tag,
-      # so the pin stays; do not float to @main.
+      # NOTE: pinned to a02c9b2b... = upstream main HEAD, the commit that bumps
+      # inner actions to Node 24 (checkout@v5 / setup-python@v7 /
+      # add-and-commit@v11). 1.8.0 (bea8b4b) still pins Node 20 actions and
+      # triggers the Node 20 deprecation warning. action.py is byte-identical
+      # between the two, so this pin only changes the action runtime.
+      # Still SHA-pinned; do not float to @main.
       - name: Generate YouTube cards (attempt 1)
         id: cards_attempt1
         continue-on-error: true
-        uses: DenverCoder1/github-readme-youtube-cards@bea8b4bc2094973fe3c3a49d86076328588dc454 # 1.8.0
+        uses: DenverCoder1/github-readme-youtube-cards@a02c9b2b841c1cae3e8651571c0146a627423dc1 # main (Node 24 runtime)
         with:
           channel_id: UCcSnI3n2Jd-2qgncC6k_S1g
           lang: en
@@ -53,7 +56,7 @@ jobs:
         id: cards_attempt2
         if: steps.cards_attempt1.outputs.markdown == ''
         continue-on-error: true
-        uses: DenverCoder1/github-readme-youtube-cards@bea8b4bc2094973fe3c3a49d86076328588dc454 # 1.8.0
+        uses: DenverCoder1/github-readme-youtube-cards@a02c9b2b841c1cae3e8651571c0146a627423dc1 # main (Node 24 runtime)
         with:
           channel_id: UCcSnI3n2Jd-2qgncC6k_S1g
           lang: en
