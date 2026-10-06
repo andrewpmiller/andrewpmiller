@@ -81,12 +81,48 @@ jobs:
             echo 'CARDS_EOF'
           } >> "$GITHUB_OUTPUT"
 
+      # Upstream emits `markdown` via an unquoted `echo`, which collapses card
+      # line breaks and flattens the section onto a single line. Re-split it into
+      # one card per line by extracting each card image in order. Idempotent: an
+      # already well-formed section produces the same result.
+      - name: Normalize cards onto separate lines
+        id: normalized
+        env:
+          MARKDOWN: ${{ steps.cards.outputs.markdown }}
+        run: |
+          normalized=$(python3 - <<'PY'
+          import os, re
+          md = os.environ.get("MARKDOWN", "")
+          md = re.sub(r"\s+", " ", md).strip()
+          if not md:
+              print("")
+              raise SystemExit(0)
+          # Split at each card start rather than matching parens: card titles
+          # and URLs contain parentheses, so paren matching is unreliable.
+          starts = [m.start() for m in re.finditer(r"\[!\[[^\]]*\]\(", md)]
+          if len(starts) < 2:
+              print(md)
+              raise SystemExit(0)
+          cards = [
+              md[s:(starts[k + 1] if k + 1 < len(starts) else len(md))].strip()
+              for k, s in enumerate(starts)
+          ]
+          print("\n".join(cards))
+          PY
+          )
+          {
+            echo 'markdown<<NORM_EOF'
+            printf '%s\n' "$normalized"
+            echo 'NORM_EOF'
+          } >> "$GITHUB_OUTPUT"
+          echo "Cards on separate lines: $(printf '%s\n' "$normalized" | grep -c '^\[!\[' || true)"
+
       # Fail-open: empty markdown warns + sets skip=true (exit 0) instead of
       # failing the run. Logs length + first 500 chars for diagnostics.
       - name: Verify cards were generated
         id: verify
         env:
-          MARKDOWN: ${{ steps.cards.outputs.markdown }}
+          MARKDOWN: ${{ steps.normalized.outputs.markdown }}
         run: |
           len=$(printf '%s' "$MARKDOWN" | wc -c)
           echo "Markdown length: ${len} chars"
@@ -104,7 +140,7 @@ jobs:
       - name: Write cards to README
         if: steps.verify.outputs.skip != 'true'
         env:
-          MARKDOWN: ${{ steps.cards.outputs.markdown }}
+          MARKDOWN: ${{ steps.normalized.outputs.markdown }}
         run: |
           # Belt-and-suspenders: never write an empty section even if gating fails.
           if [ -z "$MARKDOWN" ]; then
