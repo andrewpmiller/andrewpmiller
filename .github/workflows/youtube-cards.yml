@@ -17,6 +17,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Run card tests
+        run: python3 tests/test_cards.py
+
       # Pre-check: probe the YouTube RSS feed so logs distinguish a YouTube
       # outage (non-2xx/slow here) from a bug in the cards action. Never fails.
       - name: Pre-check YouTube RSS feed
@@ -50,8 +53,8 @@ jobs:
         run: sleep 60
 
       # Attempt 2: only runs if attempt 1 produced empty output (transient
-      # YouTube RSS blip). Exhausted retries fall through to the fail-open
-      # verify step below, so transient failures stay green and retry next schedule.
+      # YouTube RSS blip). If both attempts come back empty, the verify step
+      # below fails the run so a stale README can't look healthy.
       - name: Generate YouTube cards (attempt 2)
         id: cards_attempt2
         if: steps.cards_attempt1.outputs.markdown == ''
@@ -82,45 +85,18 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       # Upstream emits `markdown` via an unquoted `echo`, which collapses card
-      # line breaks and flattens the section onto a single line. Re-split it into
-      # one card per line by extracting each card image in order. Idempotent: an
-      # already well-formed section produces the same result.
+      # line breaks and flattens the section onto a single line. Re-split it
+      # onto one card per line (logic in scripts/normalize_cards.py).
       - name: Normalize cards onto separate lines
         id: normalized
         env:
           MARKDOWN: ${{ steps.cards.outputs.markdown }}
-        run: |
-          normalized=$(python3 - <<'PY'
-          import os, re
-          md = os.environ.get("MARKDOWN", "")
-          md = re.sub(r"\s+", " ", md).strip()
-          if not md:
-              print("")
-              raise SystemExit(0)
-          # Split at each card start rather than matching parens: card titles
-          # and URLs contain parentheses, so paren matching is unreliable.
-          starts = [m.start() for m in re.finditer(r"\[!\[[^\]]*\]\(", md)]
-          if len(starts) < 2:
-              print(md)
-              raise SystemExit(0)
-          cards = [
-              md[s:(starts[k + 1] if k + 1 < len(starts) else len(md))].strip()
-              for k, s in enumerate(starts)
-          ]
-          print("\n".join(cards))
-          PY
-          )
-          {
-            echo 'markdown<<NORM_EOF'
-            printf '%s\n' "$normalized"
-            echo 'NORM_EOF'
-          } >> "$GITHUB_OUTPUT"
-          echo "Cards on separate lines: $(printf '%s\n' "$normalized" | grep -c '^\[!\[' || true)"
+        run: python3 scripts/normalize_cards.py
 
-      # Fail-open: empty markdown warns + sets skip=true (exit 0) instead of
-      # failing the run. Logs length + first 500 chars for diagnostics.
+      # Fail-closed: empty markdown after both attempts means the feed fetch
+      # failed. Exit 1 so the run goes red instead of leaving a stale README
+      # looking healthy. Logs length + first 500 chars for diagnostics.
       - name: Verify cards were generated
-        id: verify
         env:
           MARKDOWN: ${{ steps.normalized.outputs.markdown }}
         run: |
@@ -130,46 +106,17 @@ jobs:
           printf '%s' "$MARKDOWN" | head -c 500
           echo
           if [ -z "$MARKDOWN" ]; then
-            echo "::warning::No YouTube cards generated — skipping README update; next scheduled run will retry."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error::No YouTube cards generated after two attempts — README left unchanged."
+            exit 1
           fi
-          echo "skip=false" >> "$GITHUB_OUTPUT"
           echo "YouTube cards verified successfully"
 
       - name: Write cards to README
-        if: steps.verify.outputs.skip != 'true'
         env:
           MARKDOWN: ${{ steps.normalized.outputs.markdown }}
-        run: |
-          # Belt-and-suspenders: never write an empty section even if gating fails.
-          if [ -z "$MARKDOWN" ]; then
-            echo "::warning::Empty markdown at write step — refusing to write."
-            exit 0
-          fi
-          python3 - <<'PY'
-          import os, re
-          markdown = os.environ["MARKDOWN"]
-          if not markdown.strip():
-              print("::warning::Empty markdown at write step — refusing to write.")
-              raise SystemExit(0)
-          with open("README.md", "r", encoding="utf-8") as f:
-              content = f.read()
-          pattern = r"(<!-- BEGIN YOUTUBE-CARDS -->).*?(<!-- END YOUTUBE-CARDS -->)"
-          if not re.search(pattern, content, flags=re.DOTALL):
-              raise ValueError("YouTube cards markers not found in README.md")
-          content = re.sub(
-              pattern,
-              lambda m: m.group(1) + "\n" + markdown + "\n" + m.group(2),
-              content,
-              flags=re.DOTALL,
-          )
-          with open("README.md", "w", encoding="utf-8") as f:
-              f.write(content)
-          PY
+        run: python3 scripts/write_cards.py
 
       - name: Commit and push
-        if: steps.verify.outputs.skip != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
