@@ -16,6 +16,10 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          # The staleness gate needs history to date the last card commit;
+          # checkout's default of 1 commit would hide it.
+          fetch-depth: 0
 
       - name: Run card tests
         run: python3 tests/test_cards.py
@@ -54,7 +58,8 @@ jobs:
 
       # Attempt 2: only runs if attempt 1 produced empty output (transient
       # YouTube RSS blip). If both attempts come back empty, the verify step
-      # below fails the run so a stale README can't look healthy.
+      # below decides: tolerate it if the README is still fresh, fail if it
+      # has gone stale.
       - name: Generate YouTube cards (attempt 2)
         id: cards_attempt2
         if: steps.cards_attempt1.outputs.markdown == ''
@@ -93,10 +98,12 @@ jobs:
           MARKDOWN: ${{ steps.cards.outputs.markdown }}
         run: python3 scripts/normalize_cards.py
 
-      # Fail-closed: empty markdown after both attempts means the feed fetch
-      # failed. Exit 1 so the run goes red instead of leaving a stale README
-      # looking healthy. Logs length + first 500 chars for diagnostics.
+      # Logs length + first 500 chars for diagnostics. A single feed failure
+      # stays green: the README is still fresh and the next scheduled run
+      # retries. It only fails once the README has gone un-updated for
+      # STALE_DAYS, so a real outage is still loud.
       - name: Verify cards were generated
+        id: verify
         env:
           MARKDOWN: ${{ steps.normalized.outputs.markdown }}
         run: |
@@ -106,17 +113,25 @@ jobs:
           printf '%s' "$MARKDOWN" | head -c 500
           echo
           if [ -z "$MARKDOWN" ]; then
-            echo "::error::No YouTube cards generated after two attempts — README left unchanged."
+            if python3 scripts/card_staleness.py; then
+              echo "::warning::No YouTube cards generated, but the README is still fresh — skipping this run; the next scheduled run will retry."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::error::No YouTube cards generated after two attempts and the README is now stale — README left unchanged."
             exit 1
           fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
           echo "YouTube cards verified successfully"
 
       - name: Write cards to README
+        if: steps.verify.outputs.skip != 'true'
         env:
           MARKDOWN: ${{ steps.normalized.outputs.markdown }}
         run: python3 scripts/write_cards.py
 
       - name: Commit and push
+        if: steps.verify.outputs.skip != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
