@@ -94,6 +94,7 @@ def test_freshly_updated_is_not_stale():
 
 
 def test_readme_age_uses_the_last_commit_that_changed_readme():
+    os.environ.pop("README_EPOCH", None)
     repo = tempfile.mkdtemp()
     env = dict(os.environ, GIT_AUTHOR_DATE="2026-10-10T00:00:00Z",
                GIT_COMMITTER_DATE="2026-10-10T00:00:00Z")
@@ -116,6 +117,32 @@ def test_readme_age_uses_the_last_commit_that_changed_readme():
     # 2026-10-10 -> 2026-10-15
     assert 4.9 < age < 5.1, age
     assert is_stale(age)
+
+
+def test_readme_epoch_env_wins_over_git_history():
+    # The cards action clobbers history mid-job, so the workflow captures the
+    # age beforehand and passes it in. The env var must take precedence.
+    epoch = str(int(datetime.datetime(2026, 10, 10, tzinfo=datetime.timezone.utc).timestamp()))
+    os.environ["README_EPOCH"] = epoch
+    cwd = os.getcwd()
+    os.chdir(tempfile.mkdtemp())  # not a git repo on purpose
+    try:
+        age = readme_age_days(NOW)
+    finally:
+        os.chdir(cwd)
+        os.environ.pop("README_EPOCH", None)
+    assert 4.9 < age < 5.1, age
+    assert is_stale(age)
+
+
+def test_readme_epoch_env_recent_is_not_stale():
+    epoch = str(int(datetime.datetime(2026, 10, 14, tzinfo=datetime.timezone.utc).timestamp()))
+    os.environ["README_EPOCH"] = epoch
+    try:
+        age = readme_age_days(NOW)
+    finally:
+        os.environ.pop("README_EPOCH", None)
+    assert not is_stale(age), age
 
 
 if __name__ == "__main__":

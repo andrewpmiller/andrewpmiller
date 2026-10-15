@@ -29,6 +29,14 @@ jobs:
       - name: Run card tests
         run: python3 tests/test_cards.py
 
+      # Measure README age HERE, before the cards action runs. That action
+      # re-checks-out the repo with fetch-depth 1 mid-job, which would make a
+      # later `git log -- README.md` report the wrong commit and silently
+      # disable the staleness gate.
+      - name: Measure README age
+        id: readme_age
+        run: echo "epoch=$(git log -1 --format=%ct -- README.md)" >> "$GITHUB_OUTPUT"
+
       # Pre-check: probe the YouTube RSS feed so logs distinguish a YouTube
       # outage (non-2xx/slow here) from a bug in the cards action. Never fails.
       - name: Pre-check YouTube RSS feed
@@ -111,6 +119,8 @@ jobs:
         id: verify
         env:
           MARKDOWN: ${{ steps.normalized.outputs.markdown }}
+          # Taken before the cards action clobbered our history (see above).
+          README_EPOCH: ${{ steps.readme_age.outputs.epoch }}
         run: |
           len=$(printf '%s' "$MARKDOWN" | wc -c)
           echo "Markdown length: ${len} chars"

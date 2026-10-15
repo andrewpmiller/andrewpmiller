@@ -10,13 +10,24 @@ Exits 0 when the README's cards are still fresh, 1 when they are stale or the
 age cannot be established at all.
 """
 import datetime
+import os
 import subprocess
 
 STALE_DAYS = 3
 
 
 def readme_age_days(now: datetime.datetime) -> float:
-    """Days elapsed since the last commit that changed README.md."""
+    """Days elapsed since the last commit that changed README.md.
+
+    Prefer README_EPOCH from the environment. The cards action re-checks-out
+    the repo with fetch-depth 1 mid-job, which replaces our deep clone and
+    makes `git log -- README.md` report the wrong commit, so the age must be
+    measured before that happens and passed through.
+    """
+    epoch = os.environ.get("README_EPOCH")
+    if epoch:
+        then = datetime.datetime.fromtimestamp(int(epoch), datetime.timezone.utc)
+        return (now - then).total_seconds() / 86400
     out = subprocess.run(
         ["git", "log", "-1", "--format=%ct", "--", "README.md"],
         capture_output=True,
