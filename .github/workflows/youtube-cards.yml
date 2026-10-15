@@ -14,6 +14,11 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+    env:
+      # Single source of truth: the pre-check probe and both generation
+      # attempts must agree, or the probe can report 200 while the actual
+      # fetch is failing — the one signal we rely on during an outage.
+      CHANNEL_ID: UCcSnI3n2Jd-2qgncC6k_S1g
     steps:
       - uses: actions/checkout@v5
         with:
@@ -32,7 +37,7 @@ jobs:
           curl -sS -o /dev/null \
             -w 'rss_http_code=%{http_code} rss_time_total=%{time_total}s rss_size=%{size_download}B\n' \
             --max-time 30 \
-            'https://www.youtube.com/feeds/videos.xml?channel_id=UCcSnI3n2Jd-2qgncC6k_S1g' || true
+            "https://www.youtube.com/feeds/videos.xml?channel_id=${CHANNEL_ID}" || true
 
       # Attempt 1: direct (no wrapper). This action exits 0 even on feed
       # fetch failure (empty markdown), so retry is handled by the
@@ -48,7 +53,7 @@ jobs:
         continue-on-error: true
         uses: DenverCoder1/github-readme-youtube-cards@a02c9b2b841c1cae3e8651571c0146a627423dc1 # main (Node 24 runtime)
         with:
-          channel_id: UCcSnI3n2Jd-2qgncC6k_S1g
+          channel_id: ${{ env.CHANNEL_ID }}
           lang: en
           output_only: true
 
@@ -66,7 +71,7 @@ jobs:
         continue-on-error: true
         uses: DenverCoder1/github-readme-youtube-cards@a02c9b2b841c1cae3e8651571c0146a627423dc1 # main (Node 24 runtime)
         with:
-          channel_id: UCcSnI3n2Jd-2qgncC6k_S1g
+          channel_id: ${{ env.CHANNEL_ID }}
           lang: en
           output_only: true
 
