@@ -2,7 +2,9 @@
 """Replace the marked YouTube card section in README.md.
 
 Refuses to write an empty section or to touch a README without both markers,
-so a bad run can never blank or corrupt the cards.
+so a bad run can never blank or corrupt the cards. README_PATH overrides which
+file is edited, so the same script serves a user profile (README.md) and an org
+profile (profile/README.md).
 """
 import os
 import re
@@ -26,9 +28,10 @@ def inject(content: str, markdown: str) -> str:
 
 def main() -> None:
     markdown = os.environ["MARKDOWN"]
-    with open("README.md", "r", encoding="utf-8") as f:
+    path = os.environ.get("README_PATH", "README.md")
+    with open(path, "r", encoding="utf-8") as f:
         content = f.read()
-    with open("README.md", "w", encoding="utf-8") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(inject(content, markdown))
 
 

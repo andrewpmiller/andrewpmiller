@@ -19,6 +19,9 @@ jobs:
       # attempts must agree, or the probe can report 200 while the actual
       # fetch is failing — the one signal we rely on during an outage.
       CHANNEL_ID: UCcSnI3n2Jd-2qgncC6k_S1g
+      # Where the card section lives: a user profile is README.md at the repo
+      # root; an org profile is profile/README.md inside its .github repo.
+      README_PATH: README.md
     steps:
       - uses: actions/checkout@v5
 
@@ -134,7 +137,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # The feed-health count must persist even when the README is skipped,
           # so this step is not gated on `skip` (it runs only if Verify passed).
-          git add README.md .github/youtube-feed-state.json
+          git add "$README_PATH" .github/youtube-feed-state.json
           if ! git diff --cached --quiet; then
             git commit -m "Update YouTube cards / feed health ($(date -u +%Y-%m-%d))"
             git pull --rebase --autostash

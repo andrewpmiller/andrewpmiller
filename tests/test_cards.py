@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
 from feed_health import MAX_CONSECUTIVE_FAILURES, load, next_count, save, should_fail
 from normalize_cards import normalize
-from write_cards import inject
+from write_cards import inject, main as write_cards_main
 
 CARDS = (
     '[![A](https://ytcards.demolab.com/?id=1 "A")](https://youtu.be/1)\n'
@@ -107,6 +107,30 @@ def test_state_round_trips():
 
 def test_missing_state_reads_as_zero():
     assert load(os.path.join(tempfile.mkdtemp(), "absent.json")) == 0
+
+
+def test_main_writes_the_section_to_readme_path():
+    # The same script must serve an org profile (profile/README.md), not only
+    # README.md at the repo root.
+    repo = tempfile.mkdtemp()
+    target = os.path.join(repo, "profile", "README.md")
+    os.makedirs(os.path.dirname(target))
+    with open(target, "w") as f:
+        f.write(README)
+    os.environ["MARKDOWN"] = CARDS
+    os.environ["README_PATH"] = target
+    cwd = os.getcwd()
+    os.chdir(repo)
+    try:
+        write_cards_main()
+    finally:
+        os.chdir(cwd)
+        os.environ.pop("MARKDOWN", None)
+        os.environ.pop("README_PATH", None)
+    with open(target) as f:
+        out = f.read()
+    assert CARDS.splitlines()[0] in out
+    assert "old line" not in out
 
 
 if __name__ == "__main__":
