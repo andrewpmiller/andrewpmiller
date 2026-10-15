@@ -21,21 +21,9 @@ jobs:
       CHANNEL_ID: UCcSnI3n2Jd-2qgncC6k_S1g
     steps:
       - uses: actions/checkout@v5
-        with:
-          # The staleness gate needs history to date the last card commit;
-          # checkout's default of 1 commit would hide it.
-          fetch-depth: 0
 
       - name: Run card tests
         run: python3 tests/test_cards.py
-
-      # Measure README age HERE, before the cards action runs. That action
-      # re-checks-out the repo with fetch-depth 1 mid-job, which would make a
-      # later `git log -- README.md` report the wrong commit and silently
-      # disable the staleness gate.
-      - name: Measure README age
-        id: readme_age
-        run: echo "epoch=$(git log -1 --format=%ct -- README.md)" >> "$GITHUB_OUTPUT"
 
       # Pre-check: probe the YouTube RSS feed so logs distinguish a YouTube
       # outage (non-2xx/slow here) from a bug in the cards action. Never fails.
@@ -70,9 +58,8 @@ jobs:
         run: sleep 60
 
       # Attempt 2: only runs if attempt 1 produced empty output (transient
-      # YouTube RSS blip). If both attempts come back empty, the verify step
-      # below decides: tolerate it if the README is still fresh, fail if it
-      # has gone stale.
+      # YouTube RSS blip). If both come back empty, the feed-health step below
+      # decides whether this is a blip to tolerate or an outage to fail on.
       - name: Generate YouTube cards (attempt 2)
         id: cards_attempt2
         if: steps.cards_attempt1.outputs.markdown == ''
@@ -111,33 +98,29 @@ jobs:
           MARKDOWN: ${{ steps.cards.outputs.markdown }}
         run: python3 scripts/normalize_cards.py
 
-      # Logs length + first 500 chars for diagnostics. A single feed failure
-      # stays green: the README is still fresh and the next scheduled run
-      # retries. It only fails once the README has gone un-updated for
-      # STALE_DAYS, so a real outage is still loud.
-      - name: Verify cards were generated
+      # Logs length + first 500 chars for diagnostics. A failed fetch is not
+      # automatically an error: a one-off blip stays green and the next run
+      # retries, while several consecutive failures go red. The streak lives in
+      # .github/youtube-feed-state.json so idle, upload-free days never count
+      # against it (see scripts/feed_health.py).
+      - name: Check feed health
         id: verify
         env:
           MARKDOWN: ${{ steps.normalized.outputs.markdown }}
-          # Taken before the cards action clobbered our history (see above).
-          README_EPOCH: ${{ steps.readme_age.outputs.epoch }}
         run: |
           len=$(printf '%s' "$MARKDOWN" | wc -c)
           echo "Markdown length: ${len} chars"
           echo "First 500 chars:"
           printf '%s' "$MARKDOWN" | head -c 500
           echo
-          if [ -z "$MARKDOWN" ]; then
-            if python3 scripts/card_staleness.py; then
-              echo "::warning::No YouTube cards generated, but the README is still fresh — skipping this run; the next scheduled run will retry."
-              echo "skip=true" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            echo "::error::No YouTube cards generated after two attempts and the README is now stale — README left unchanged."
-            exit 1
+          if [ -n "$MARKDOWN" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            feed_ok=true
+          else
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            feed_ok=false
           fi
-          echo "skip=false" >> "$GITHUB_OUTPUT"
-          echo "YouTube cards verified successfully"
+          FEED_OK="$feed_ok" python3 scripts/feed_health.py
 
       - name: Write cards to README
         if: steps.verify.outputs.skip != 'true'
@@ -146,13 +129,14 @@ jobs:
         run: python3 scripts/write_cards.py
 
       - name: Commit and push
-        if: steps.verify.outputs.skip != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add README.md
+          # The feed-health count must persist even when the README is skipped,
+          # so this step is not gated on `skip` (it runs only if Verify passed).
+          git add README.md .github/youtube-feed-state.json
           if ! git diff --cached --quiet; then
-            git commit -m "Update YouTube cards ($(date -u +%Y-%m-%d))"
+            git commit -m "Update YouTube cards / feed health ($(date -u +%Y-%m-%d))"
             git pull --rebase --autostash
             git push
           else

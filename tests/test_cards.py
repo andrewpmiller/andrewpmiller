@@ -3,16 +3,13 @@
 
 Run with: python3 tests/test_cards.py  (exits non-zero on any failure)
 """
-import datetime
 import os
-import subprocess
 import sys
 import tempfile
-from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
-from card_staleness import STALE_DAYS, is_stale, readme_age_days
+from feed_health import MAX_CONSECUTIVE_FAILURES, load, next_count, save, should_fail
 from normalize_cards import normalize
 from write_cards import inject
 
@@ -77,72 +74,39 @@ def test_inject_empty_markdown_raises():
     raise AssertionError("expected ValueError when markdown is empty")
 
 
-NOW = datetime.datetime(2026, 10, 15, tzinfo=datetime.timezone.utc)
+def test_quiet_publishing_is_never_an_error():
+    # Feed reachable is the only thing that matters; a long gap between
+    # uploads must not fail, whatever the counts say.
+    assert not should_fail(0, True)
+    assert not should_fail(9, True)
 
 
-def test_one_day_is_not_stale():
-    # A single missed feed fetch must stay green.
-    assert not is_stale(1.0)
+def test_a_single_feed_failure_is_tolerated():
+    assert next_count(0, False) == 1
+    assert not should_fail(1, False)
 
 
-def test_threshold_is_stale():
-    assert is_stale(float(STALE_DAYS))
+def test_a_reachable_feed_resets_the_streak():
+    assert next_count(2, True) == 0
 
 
-def test_freshly_updated_is_not_stale():
-    assert not is_stale(0.0)
+def test_repeated_feed_failures_eventually_fail():
+    count, outcomes = 0, []
+    for _ in range(MAX_CONSECUTIVE_FAILURES):
+        count = next_count(count, False)
+        outcomes.append(should_fail(count, False))
+    assert outcomes[:-1] == [False] * (MAX_CONSECUTIVE_FAILURES - 1)
+    assert outcomes[-1] is True
 
 
-def test_readme_age_uses_the_last_commit_that_changed_readme():
-    os.environ.pop("README_EPOCH", None)
-    repo = tempfile.mkdtemp()
-    env = dict(os.environ, GIT_AUTHOR_DATE="2026-10-10T00:00:00Z",
-               GIT_COMMITTER_DATE="2026-10-10T00:00:00Z")
-    run = lambda *a: subprocess.run(a, cwd=repo, env=env, check=True,
-                                    capture_output=True, text=True)
-    run("git", "init", "-q", ".")
-    run("git", "config", "user.email", "t@t")
-    run("git", "config", "user.name", "t")
-    # A commit that does not touch README.md must not count.
-    run("git", "commit", "-q", "--allow-empty", "-m", "noise")
-    (Path(repo) / "README.md").write_text("hi")
-    run("git", "add", "README.md")
-    run("git", "commit", "-q", "-m", "cards")
-    cwd = os.getcwd()
-    os.chdir(repo)
-    try:
-        age = readme_age_days(NOW)
-    finally:
-        os.chdir(cwd)
-    # 2026-10-10 -> 2026-10-15
-    assert 4.9 < age < 5.1, age
-    assert is_stale(age)
+def test_state_round_trips():
+    path = os.path.join(tempfile.mkdtemp(), "state.json")
+    save(2, path)
+    assert load(path) == 2
 
 
-def test_readme_epoch_env_wins_over_git_history():
-    # The cards action clobbers history mid-job, so the workflow captures the
-    # age beforehand and passes it in. The env var must take precedence.
-    epoch = str(int(datetime.datetime(2026, 10, 10, tzinfo=datetime.timezone.utc).timestamp()))
-    os.environ["README_EPOCH"] = epoch
-    cwd = os.getcwd()
-    os.chdir(tempfile.mkdtemp())  # not a git repo on purpose
-    try:
-        age = readme_age_days(NOW)
-    finally:
-        os.chdir(cwd)
-        os.environ.pop("README_EPOCH", None)
-    assert 4.9 < age < 5.1, age
-    assert is_stale(age)
-
-
-def test_readme_epoch_env_recent_is_not_stale():
-    epoch = str(int(datetime.datetime(2026, 10, 14, tzinfo=datetime.timezone.utc).timestamp()))
-    os.environ["README_EPOCH"] = epoch
-    try:
-        age = readme_age_days(NOW)
-    finally:
-        os.environ.pop("README_EPOCH", None)
-    assert not is_stale(age), age
+def test_missing_state_reads_as_zero():
+    assert load(os.path.join(tempfile.mkdtemp(), "absent.json")) == 0
 
 
 if __name__ == "__main__":
