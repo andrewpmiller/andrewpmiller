@@ -53,16 +53,16 @@ def main():
     if count != previous:
         save(count)
     if feed_ok:
-        print(f"Feed reachable — consecutive-failure count reset to 0 (was {previous}).")
+        print(f"Cards produced — consecutive-failure count reset to 0 (was {previous}).")
         return 0
     if should_fail(count, feed_ok):
         print(
-            f"::error::YouTube feed unreachable for {count} consecutive runs — "
+            f"::error::No cards produced for {count} consecutive runs — "
             "failing so the outage is visible."
         )
         return 1
     print(
-        f"::warning::YouTube feed unreachable ({count} of "
+        f"::warning::No cards produced ({count} of "
         f"{MAX_CONSECUTIVE_FAILURES} consecutive runs) — staying green, next run retries."
     )
     return 0

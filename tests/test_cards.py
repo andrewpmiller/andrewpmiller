@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for the two scripts that rewrite README.md.
+"""Tests for the scripts that rewrite README.md.
 
 Run with: python3 tests/test_cards.py  (exits non-zero on any failure)
 """
@@ -10,7 +10,7 @@ import tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
 from feed_health import MAX_CONSECUTIVE_FAILURES, load, next_count, save, should_fail
-from normalize_cards import normalize
+from fetch_cards import build_markdown, main as fetch_main
 from write_cards import inject, main as write_cards_main
 
 CARDS = (
@@ -26,26 +26,55 @@ README = (
 )
 
 
-def test_splits_cards_onto_separate_lines():
-    assert normalize(CARDS) == CARDS
-
-
-def test_bracket_in_title_still_splits():
-    # A title containing "]" used to defeat the old splitter.
-    md = (
-        '[![Tune [beta] test](https://ytcards.demolab.com/?id=1 "x")](https://youtu.be/1) '
-        '[![Next](https://ytcards.demolab.com/?id=2 "y")](https://youtu.be/2)'
+def feed(*entries):
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?><feed>'
+        + "".join(
+            f"<entry><yt:videoId>{video_id}</yt:videoId><title>{title}</title>"
+            f"<published>{published}</published></entry>"
+            for video_id, title, published in entries
+        )
+        + "</feed>"
     )
-    out = normalize(md)
-    assert out.count("\n") == 1, out
 
 
-def test_normalize_is_idempotent():
-    assert normalize(normalize(CARDS)) == normalize(CARDS)
+# The 10.25.2026 card below is copied from README.md, so its timestamp and
+# encoding are the real ones: any change to the URL shape fails this test.
+FEED = feed(
+    ("62B-lts355c", "10.25.2026 - Acidic Euclidean Silliness.", "2026-10-26T00:01:07+00:00"),
+    ("GQG2c6gQ0rk", "10.11.2026 - Definitely dub.", "2026-10-11T23:16:13+00:00"),
+)
+CARD = (
+    '[![10.25.2026 - Acidic Euclidean Silliness.]'
+    "(https://ytcards.demolab.com/?id=62B-lts355c"
+    "&title=10.25.2026+-+Acidic+Euclidean+Silliness."
+    "&lang=en&timestamp=1792972867&background_color=%230d1117&title_color=%23ffffff"
+    "&stats_color=%23dedede&max_title_lines=1&width=250&border_radius=5 "
+    '"10.25.2026 - Acidic Euclidean Silliness.")]'
+    "(https://www.youtube.com/watch?v=62B-lts355c)"
+)
 
 
-def test_normalize_empty():
-    assert normalize("") == ""
+def test_cards_match_the_readme_format():
+    assert build_markdown(FEED).splitlines()[0] == CARD
+
+
+def test_cards_stop_at_six():
+    many = feed(*[(f"id{i}", f"video {i}", "2026-10-26T00:01:07+00:00") for i in range(8)])
+    assert len(build_markdown(many).splitlines()) == 6
+
+
+def test_fetch_main_writes_the_output_block():
+    path = os.path.join(tempfile.mkdtemp(), "output")
+    os.environ["GITHUB_OUTPUT"] = path
+    os.environ["CHANNEL_ID"] = "test"
+    try:
+        fetch_main(lambda _channel_id: build_markdown(FEED))
+    finally:
+        os.environ.pop("GITHUB_OUTPUT", None)
+        os.environ.pop("CHANNEL_ID", None)
+    with open(path) as f:
+        assert f.read() == "markdown<<CARDS_EOF\n" + build_markdown(FEED) + "\nCARDS_EOF\n"
 
 
 def test_inject_replaces_between_markers():
@@ -107,6 +136,28 @@ def test_state_round_trips():
 
 def test_missing_state_reads_as_zero():
     assert load(os.path.join(tempfile.mkdtemp(), "absent.json")) == 0
+
+
+def test_write_cards_main_leaves_readme_intact_on_error():
+    # The write must happen only after inject() succeeds, or a bad run leaves
+    # a zero-byte README behind.
+    repo = tempfile.mkdtemp()
+    target = os.path.join(repo, "README.md")
+    with open(target, "w") as f:
+        f.write(README)
+    os.environ["MARKDOWN"] = ""
+    os.environ["README_PATH"] = target
+    try:
+        write_cards_main()
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError for empty markdown")
+    finally:
+        os.environ.pop("MARKDOWN", None)
+        os.environ.pop("README_PATH", None)
+    with open(target) as f:
+        assert f.read() == README
 
 
 def test_main_writes_the_section_to_readme_path():

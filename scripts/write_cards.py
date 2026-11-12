@@ -31,8 +31,9 @@ def main() -> None:
     path = os.environ.get("README_PATH", "README.md")
     with open(path, "r", encoding="utf-8") as f:
         content = f.read()
+    new_content = inject(content, markdown)
     with open(path, "w", encoding="utf-8") as f:
-        f.write(inject(content, markdown))
+        f.write(new_content)
 
 
 if __name__ == "__main__":

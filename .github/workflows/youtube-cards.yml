@@ -3,6 +3,16 @@ on:
   schedule:
     - cron: "0 0 * * *"
   workflow_dispatch:
+  push:
+    paths:
+      - scripts/**
+      - tests/**
+      - .github/workflows/youtube-cards.yml
+  pull_request:
+    paths:
+      - scripts/**
+      - tests/**
+      - .github/workflows/youtube-cards.yml
 
 concurrency:
   group: youtube-cards
@@ -15,9 +25,9 @@ jobs:
     permissions:
       contents: write
     env:
-      # Single source of truth: the pre-check probe and both generation
-      # attempts must agree, or the probe can report 200 while the actual
-      # fetch is failing — the one signal we rely on during an outage.
+      # Single source of truth: the pre-check probe and the card fetch must
+      # agree, or the probe can report 200 while the actual fetch is failing —
+      # the one signal we rely on during an outage.
       CHANNEL_ID: UCcSnI3n2Jd-2qgncC6k_S1g
       # Where the card section lives: a user profile is README.md at the repo
       # root; an org profile is profile/README.md inside its .github repo.
@@ -28,78 +38,26 @@ jobs:
       - name: Run card tests
         run: python3 tests/test_cards.py
 
-      # Pre-check: probe the YouTube RSS feed so logs distinguish a YouTube
-      # outage (non-2xx/slow here) from a bug in the cards action. Never fails.
+      # Pre-check: probe the YouTube RSS feed so the log can tell a YouTube
+      # outage (404/500/slow here) from a bug in our own fetch. Never fails.
       - name: Pre-check YouTube RSS feed
+        id: precheck
         continue-on-error: true
         run: |
-          curl -sS -o /dev/null \
-            -w 'rss_http_code=%{http_code} rss_time_total=%{time_total}s rss_size=%{size_download}B\n' \
+          probe=$(curl -sS -o /dev/null \
+            -w '%{http_code} %{time_total}s %{size_download}B' \
             --max-time 30 \
-            "https://www.youtube.com/feeds/videos.xml?channel_id=${CHANNEL_ID}" || true
+            "https://www.youtube.com/feeds/videos.xml?channel_id=${CHANNEL_ID}" \
+            || echo "curl failed")
+          echo "rss_probe=${probe}"
+          echo "rss_probe=${probe}" >> "$GITHUB_OUTPUT"
 
-      # Attempt 1: direct (no wrapper). This action exits 0 even on feed
-      # fetch failure (empty markdown), so retry is handled by the
-      # second attempt below, not by failure-retry wrappers.
-      # NOTE: pinned to a02c9b2b... = upstream main HEAD, the commit that bumps
-      # inner actions to Node 24 (checkout@v5 / setup-python@v7 /
-      # add-and-commit@v11). 1.8.0 (bea8b4b) still pins Node 20 actions and
-      # triggers the Node 20 deprecation warning. action.py is byte-identical
-      # between the two, so this pin only changes the action runtime.
-      # Still SHA-pinned; do not float to @main.
-      - name: Generate YouTube cards (attempt 1)
-        id: cards_attempt1
-        continue-on-error: true
-        uses: DenverCoder1/github-readme-youtube-cards@a02c9b2b841c1cae3e8651571c0146a627423dc1 # main (Node 24 runtime)
-        with:
-          channel_id: ${{ env.CHANNEL_ID }}
-          lang: en
-          output_only: true
-
-      - name: Wait before retry
-        if: steps.cards_attempt1.outputs.markdown == ''
-        run: sleep 60
-
-      # Attempt 2: only runs if attempt 1 produced empty output (transient
-      # YouTube RSS blip). If both come back empty, the feed-health step below
-      # decides whether this is a blip to tolerate or an outage to fail on.
-      - name: Generate YouTube cards (attempt 2)
-        id: cards_attempt2
-        if: steps.cards_attempt1.outputs.markdown == ''
-        continue-on-error: true
-        uses: DenverCoder1/github-readme-youtube-cards@a02c9b2b841c1cae3e8651571c0146a627423dc1 # main (Node 24 runtime)
-        with:
-          channel_id: ${{ env.CHANNEL_ID }}
-          lang: en
-          output_only: true
-
-      # Shim: expose first non-empty markdown as steps.cards.outputs.markdown
-      # so downstream steps are unchanged.
-      - name: Expose cards markdown
+      # Fetch the feed and build the card markdown (logic in scripts/fetch_cards.py).
+      # Exits 0 even when the feed fails, so the health check below decides
+      # whether an empty result is a blip to tolerate or an outage to fail on.
+      - name: Fetch YouTube cards
         id: cards
-        env:
-          MARKDOWN1: ${{ steps.cards_attempt1.outputs.markdown }}
-          MARKDOWN2: ${{ steps.cards_attempt2.outputs.markdown }}
-        run: |
-          if [ -n "$MARKDOWN2" ]; then
-            markdown="$MARKDOWN2"
-          else
-            markdown="$MARKDOWN1"
-          fi
-          {
-            echo 'markdown<<CARDS_EOF'
-            printf '%s\n' "$markdown"
-            echo 'CARDS_EOF'
-          } >> "$GITHUB_OUTPUT"
-
-      # Upstream emits `markdown` via an unquoted `echo`, which collapses card
-      # line breaks and flattens the section onto a single line. Re-split it
-      # onto one card per line (logic in scripts/normalize_cards.py).
-      - name: Normalize cards onto separate lines
-        id: normalized
-        env:
-          MARKDOWN: ${{ steps.cards.outputs.markdown }}
-        run: python3 scripts/normalize_cards.py
+        run: python3 scripts/fetch_cards.py
 
       # Logs length + first 500 chars for diagnostics. A failed fetch is not
       # automatically an error: a one-off blip stays green and the next run
@@ -109,8 +67,9 @@ jobs:
       - name: Check feed health
         id: verify
         env:
-          MARKDOWN: ${{ steps.normalized.outputs.markdown }}
+          MARKDOWN: ${{ steps.cards.outputs.markdown }}
         run: |
+          echo "precheck: ${{ steps.precheck.outputs.rss_probe }}"
           len=$(printf '%s' "$MARKDOWN" | wc -c)
           echo "Markdown length: ${len} chars"
           echo "First 500 chars:"
@@ -123,20 +82,23 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
             feed_ok=false
           fi
-          FEED_OK="$feed_ok" python3 scripts/feed_health.py
+          # Record the outage instead of failing here, so the commit step can
+          # still persist the failure count.
+          FEED_OK="$feed_ok" python3 scripts/feed_health.py || echo "fail=true" >> "$GITHUB_OUTPUT"
 
       - name: Write cards to README
         if: steps.verify.outputs.skip != 'true'
         env:
-          MARKDOWN: ${{ steps.normalized.outputs.markdown }}
+          MARKDOWN: ${{ steps.cards.outputs.markdown }}
         run: python3 scripts/write_cards.py
 
       - name: Commit and push
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # The feed-health count must persist even when the README is skipped,
-          # so this step is not gated on `skip` (it runs only if Verify passed).
+          # The feed-health count must persist even when the README is skipped
+          # and even when the run is red, so this step is not gated on `skip`.
           git add "$README_PATH" .github/youtube-feed-state.json
           if ! git diff --cached --quiet; then
             git commit -m "Update YouTube cards / feed health ($(date -u +%Y-%m-%d))"
@@ -145,3 +107,9 @@ jobs:
           else
             echo "No changes to commit"
           fi
+
+      # Fails only after the commit step, so the failure count is persisted
+      # even on the run that goes red.
+      - name: Fail on feed outage
+        if: steps.verify.outputs.fail == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        run: exit 1
